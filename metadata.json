@@ -1,0 +1,6 @@
+{
+  "name": "Sewadar Management System",
+  "description": "Enterprise-grade dashboard and workflow tracker for managing the complete lifecycle of sewadars, including attendance, aging trackers, analytics, and role-based user access management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
