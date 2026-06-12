@@ -10,7 +10,6 @@ import {
   MapPin,
   Phone,
   User,
-  Activity,
   Award,
   Upload,
   FileCheck,
