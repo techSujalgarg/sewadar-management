@@ -2,16 +2,18 @@ import React, { useState } from "react";
 import { Lock, Mail, ShieldAlert, Fingerprint } from "lucide-react";
 
 interface LoginPageProps {
-  onLogin: (email: string, pass: string) => boolean;
+  onLogin: (email: string, pass: string) => Promise<boolean>;
 }
 
 export default function LoginPage({ onLogin }: LoginPageProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return;
     setErrorMsg("");
     
     if (!email || !password) {
@@ -19,9 +21,16 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       return;
     }
 
-    const success = onLogin(email.trim().toLowerCase(), password);
-    if (!success) {
-      setErrorMsg("Invalid credentials or account deactivated. Contact Super Admin.");
+    setLoading(true);
+    try {
+      const success = await onLogin(email.trim().toLowerCase(), password);
+      if (!success) {
+        setErrorMsg("Invalid credentials or account deactivated. Contact Super Admin.");
+      }
+    } catch (err) {
+      setErrorMsg("Unable to connect to login server. Please try again.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -87,33 +96,24 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
           <button
             type="submit"
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs py-3 rounded-xl shadow-md shadow-indigo-600/10 active:scale-[0.99] hover:scale-[1.01] transition-all pt-3.5"
+            disabled={loading}
+            className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-bold text-xs py-3 rounded-xl shadow-md shadow-indigo-600/10 active:scale-[0.99] hover:scale-[1.01] transition-all pt-3.5 flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
           >
-            Access Core Workspace
+            {loading ? (
+              <>
+                <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                Verifying Credentials on Server...
+              </>
+            ) : (
+              "Access Core Workspace"
+            )}
           </button>
         </form>
 
-        {/* Demo Seed guidelines */}
-        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-2">
-          <p className="text-[10px] font-bold font-mono text-slate-400 uppercase tracking-widest">Seeded Operator Profiles for Review</p>
-          <div className="grid grid-cols-1 gap-1.5 text-[10px] text-slate-500">
-            <div className="flex justify-between border-b border-dashed pb-1">
-              <span>⚡ Super Admin Account:</span>
-              <span className="font-mono font-bold text-slate-700">admin@sms.org / admin123</span>
-            </div>
-            <div className="flex justify-between border-b border-dashed pb-1">
-              <span>⚙️ Lead Executive Account:</span>
-              <span className="font-mono font-bold text-slate-700">lead@sms.org / lead123</span>
-            </div>
-            <div className="flex justify-between">
-              <span>👁️ Read-Only Viewer Account:</span>
-              <span className="font-mono font-bold text-slate-700">viewer@sms.org / view123</span>
-            </div>
-          </div>
-          <span className="text-[9px] text-slate-400 block pt-1 leading-normal font-medium">
-            * Fully integrated with RBAC. Accessing directories, audit histories, or making modifications instantly applies role parameters.
-          </span>
-        </div>
+
 
       </div>
     </div>

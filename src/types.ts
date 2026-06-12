@@ -123,6 +123,7 @@ export interface UserAccount {
   isActive: boolean;
   lastLogin?: string;
   customPermissions: SystemPermission;
+  password?: string;
 }
 
 export interface SystemRole {

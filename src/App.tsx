@@ -46,7 +46,11 @@ import {
   Fingerprint,
   Info,
   LogOut,
-  Users2
+  Users2,
+  Search,
+  ArrowUpDown,
+  ChevronLeft,
+  ChevronRight
 } from "lucide-react";
 
 // Initial Core Seed Roles & Operators for SMS Workspace
@@ -115,6 +119,7 @@ const INITIAL_USERS: UserAccount[] = [
     role: "Super Admin",
     isActive: true,
     lastLogin: "2026-06-09 15:49:06",
+    password: "admin123",
     customPermissions: {
       view: true,
       add: true,
@@ -137,6 +142,7 @@ const INITIAL_USERS: UserAccount[] = [
     role: "Lead Executive",
     isActive: true,
     lastLogin: "2026-06-08 11:20:45",
+    password: "lead123",
     customPermissions: {
       view: true,
       add: true,
@@ -159,6 +165,7 @@ const INITIAL_USERS: UserAccount[] = [
     role: "Read-Only Viewer",
     isActive: true,
     lastLogin: "2026-06-09 09:12:30",
+    password: "view123",
     customPermissions: {
       view: true,
       add: false,
@@ -249,6 +256,15 @@ export default function App() {
     "dashboard" | "directory" | "attendance" | "reports" | "audit_trail" | "user_management"
   >("dashboard");
   const [selectedSewadarId, setSelectedSewadarId] = useState<string | null>(null);
+  
+  // Audit logs sorting order: "asc" or "desc"
+  const [auditSortOrder, setAuditSortOrder] = useState<"asc" | "desc">("desc");
+
+  // Audit logs search query
+  const [auditQuery, setAuditQuery] = useState("");
+
+  // Audit logs current page pagination index
+  const [auditPage, setAuditPage] = useState(1);
 
   // Sync state changes with local persistence durably
   useEffect(() => {
@@ -270,6 +286,22 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("sms_user_accounts", JSON.stringify(users));
   }, [users]);
+
+  // Sync with real-time Express auth server on load
+  useEffect(() => {
+    const fetchServerUsers = async () => {
+      try {
+        const response = await fetch("/api/users");
+        if (response.ok) {
+          const registry = await response.json();
+          setUsers(registry);
+        }
+      } catch (err) {
+        console.warn("Express server database not reachable. Falling back to robust LocalStorage state.", err);
+      }
+    };
+    fetchServerUsers();
+  }, []);
 
   useEffect(() => {
     localStorage.setItem("sms_system_roles", JSON.stringify(roles));
@@ -324,6 +356,64 @@ export default function App() {
       userManagement: false
     };
   }, [currentUser]);
+
+  // Filter audit logs by search query (matching actor email or action name) and sort by timestamp
+  const filteredAuditLogs = useMemo(() => {
+    const q = auditQuery.toLowerCase().trim();
+    const filtered = q
+      ? auditLogs.filter(
+          (log) =>
+            log.userEmail.toLowerCase().includes(q) ||
+            log.action.toLowerCase().includes(q)
+        )
+      : [...auditLogs];
+
+    // Parser helper for the two date formats used in the app
+    const parseTimestampToMs = (ts: string): number => {
+      if (!ts) return 0;
+      const standardMs = Date.parse(ts);
+      if (!isNaN(standardMs)) return standardMs;
+
+      try {
+        const parts = ts.split(" ");
+        if (parts.length >= 3) {
+          const datePart = parts[0];
+          const timePart = parts[1];
+          const ampm = parts[2].toUpperCase();
+          const [year, month, day] = datePart.split("-").map(Number);
+          let [hours, minutes] = timePart.split(":").map(Number);
+          if (ampm === "PM" && hours < 12) hours += 12;
+          else if (ampm === "AM" && hours === 12) hours = 0;
+          return new Date(year, month - 1, day, hours, minutes).getTime();
+        }
+      } catch (err) {
+        // fallback
+      }
+      return 0;
+    };
+
+    filtered.sort((a, b) => {
+      const timeA = parseTimestampToMs(a.timestamp);
+      const timeB = parseTimestampToMs(b.timestamp);
+      return auditSortOrder === "asc" ? timeA - timeB : timeB - timeA;
+    });
+
+    return filtered;
+  }, [auditLogs, auditQuery, auditSortOrder]);
+
+  // Reset Audit Trail page to 1 whenever search query changes
+  useEffect(() => {
+    setAuditPage(1);
+  }, [auditQuery]);
+
+  // Derived pagination metrics
+  const AUDIT_ITEMS_PER_PAGE = 50;
+  const totalAuditPages = Math.ceil(filteredAuditLogs.length / AUDIT_ITEMS_PER_PAGE) || 1;
+  const currentAuditPage = Math.min(Math.max(1, auditPage), totalAuditPages);
+  const paginatedAuditLogs = useMemo(() => {
+    const startIndex = (currentAuditPage - 1) * AUDIT_ITEMS_PER_PAGE;
+    return filteredAuditLogs.slice(startIndex, startIndex + AUDIT_ITEMS_PER_PAGE);
+  }, [filteredAuditLogs, currentAuditPage]);
 
   // LOG AUDIT ACTIONS LEDGER AND STREAMS
   const logAuditAction = (action: string, details: string) => {
@@ -390,49 +480,51 @@ export default function App() {
     setNotifications((prev) => [log, ...prev]);
   };
 
-  // USER MATRIX LOGIN HANDLER
-  const handleLogin = (email: string, pass: string): boolean => {
-    const matched = users.find((u) => u.email.toLowerCase() === email.toLowerCase());
-    
-    // Easy default check
-    if (matched) {
-      if (!matched.isActive) return false;
+  // USER MATRIX LOGIN HANDLER (PRODUCTION-READY AUTH SERVER API CALL)
+  const handleLogin = async (email: string, pass: string): Promise<boolean> => {
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: pass }),
+      });
 
-      // Check simple matched passwords
-      let valid = false;
-      if (email === "admin@sms.org" && pass === "admin123") valid = true;
-      else if (email === "lead@sms.org" && pass === "lead123") valid = true;
-      else if (email === "viewer@sms.org" && pass === "view123") valid = true;
-      else {
-        // Created dynamically by admin, authorize access safely
-        valid = true;
+      if (!res.ok) {
+        throw new Error("Unauthorized credentials or account deactivated.");
       }
 
-      if (valid) {
-        const timestamp = new Date().toISOString().replace("T", " ").substring(0, 19);
-        const updatedUser = { ...matched, lastLogin: timestamp };
+      const outcome = await res.json();
+      if (outcome.success && outcome.user) {
+        const authenticatedUser = outcome.user as UserAccount;
         
-        // Update user accounts list last login
-        setUsers(prev => prev.map(u => u.id === matched.id ? updatedUser : u));
-        setCurrentUser(updatedUser);
+        setCurrentUser(authenticatedUser);
         
         // Match authority roles selector
-        if (matched.role === "Super Admin") setCurrentRole("super_admin");
-        else if (matched.role === "Lead Executive") setCurrentRole("executive");
+        if (authenticatedUser.role === "Super Admin") setCurrentRole("super_admin");
+        else if (authenticatedUser.role === "Lead Executive") setCurrentRole("executive");
         else setCurrentRole("viewer");
 
         // Record trace Mod audit logs
         const newHist: LoginHistoryLog = {
           id: `login-${Date.now()}`,
-          dateTime: timestamp,
+          dateTime: authenticatedUser.lastLogin || new Date().toISOString().replace("T", " ").substring(0, 19),
           userEmail: email,
           status: "Success",
           ipAddress: "192.168.1.14"
         };
         setLoginLogs(prev => [newHist, ...prev]);
-        logAuditAction("User Session Authenticated", `Authorized operator ${matched.name} (${matched.role}) safely.`);
+        logAuditAction("User Session Authenticated", `Authorized operator ${authenticatedUser.name} (${authenticatedUser.role}) safely.`);
+        
+        // Fetch refreshed user profiles from registry
+        const syncRes = await fetch("/api/users");
+        if (syncRes.ok) {
+          const freshUsersList = await syncRes.json();
+          setUsers(freshUsersList);
+        }
         return true;
       }
+    } catch (err) {
+      console.error("Realtime login server error:", err);
     }
 
     // Failed login log register
@@ -759,25 +851,55 @@ export default function App() {
     setActiveTab("directory");
   };
 
-  // Dynamically add new users created by super admin in panel
-  const handleAddUser = (user: Omit<UserAccount, "id" | "lastLogin">) => {
+  // Dynamically add new users created by super admin in panel (real-time server API synced)
+  const handleAddUser = async (user: Omit<UserAccount, "id" | "lastLogin">) => {
+    const tempId = `usr-${Date.now()}`;
     const newUser: UserAccount = {
       ...user,
-      id: `usr-${Date.now()}`,
+      id: tempId,
       lastLogin: "Never Logged"
     };
+
     setUsers(prev => [...prev, newUser]);
     logAuditAction("Created New User Account", `Super Admin added user account ${user.name} (${user.role}).`);
+
+    try {
+      await fetch("/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newUser),
+      });
+    } catch (err) {
+      console.error("Failed to sync new user to backend server database:", err);
+    }
   };
 
-  const handleUpdateUser = (id: string, updates: Partial<UserAccount>) => {
+  const handleUpdateUser = async (id: string, updates: Partial<UserAccount>) => {
     setUsers(prev => prev.map(u => u.id === id ? { ...u, ...updates } : u));
     logAuditAction("Updated User Account", `Modified parameters on user ID: ${id}.`);
+
+    try {
+      await fetch(`/api/users/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      });
+    } catch (err) {
+      console.error("Failed to sync updated user properties to backend server database:", err);
+    }
   };
 
-  const handleDeleteUser = (id: string) => {
+  const handleDeleteUser = async (id: string) => {
     setUsers(prev => prev.filter(u => u.id !== id));
     logAuditAction("Deleted User Account", `Super Admin erased login access for User ID: ${id}.`);
+
+    try {
+      await fetch(`/api/users/${id}`, {
+        method: "DELETE"
+      });
+    } catch (err) {
+      console.error("Failed to delete user profile from backend server database:", err);
+    }
   };
 
   // Dynamic dynamic roles adding
@@ -992,21 +1114,42 @@ export default function App() {
           {/* TAB 5: AUDIT TRAIL timelogs */}
           {activeTab === "audit_trail" && effectivePermissions.view && (
             <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-55 select-none">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-3 border-b border-slate-55 gap-4 select-none">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-700">Secured System Audit Trail</h3>
                   <p className="text-xs text-slate-400 font-medium">Traceable role action timelines preventing workflow breaches.</p>
                 </div>
-                <span className="text-[10px] bg-slate-900 text-white font-mono font-bold px-2.5 py-0.5 rounded-full uppercase">
-                  SHA-256 Ledger
-                </span>
+                <div className="flex items-center gap-3 w-full sm:w-auto">
+                  <div className="relative w-full sm:w-64">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Search by actor or action..."
+                      className="w-full pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-150 rounded-lg text-xs font-medium text-slate-700 outline-none focus:ring-1 focus:ring-slate-500/20"
+                      value={auditQuery}
+                      onChange={(e) => setAuditQuery(e.target.value)}
+                    />
+                  </div>
+                  <span className="text-[10px] bg-slate-900 text-white font-mono font-bold px-2.5 py-1.5 rounded-lg uppercase shrink-0">
+                    SHA-256 Ledger
+                  </span>
+                </div>
               </div>
 
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
                     <tr className="border-b border-slate-100 text-[10px] font-mono text-slate-400 uppercase tracking-widest bg-slate-50/50">
-                      <th className="py-2.5 px-3">Date Timestamp</th>
+                      <th
+                        className="py-2.5 px-3 cursor-pointer hover:bg-slate-100 hover:text-slate-700 transition-colors select-none group"
+                        onClick={() => setAuditSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))}
+                        title="Sort logs by timestamp"
+                      >
+                        <span className="inline-flex items-center gap-1">
+                          Date Timestamp
+                          <ArrowUpDown className={`w-3 h-3 text-slate-400 group-hover:text-slate-600 transition-colors ${auditSortOrder === "asc" ? "rotate-180" : ""}`} />
+                        </span>
+                      </th>
                       <th className="py-2.5 px-3">Trigger Account</th>
                       <th className="py-2.5 px-3">Active Matrix Role</th>
                       <th className="py-2.5 px-3">Primary Action</th>
@@ -1014,22 +1157,143 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50 text-[11px] font-semibold text-slate-600">
-                    {auditLogs.slice(0, 50).map((log) => (
-                      <tr key={log.id} className="hover:bg-slate-50/40">
-                        <td className="py-2.5 px-3 font-mono text-slate-400">{log.timestamp}</td>
-                        <td className="py-2.5 px-3 text-slate-700">{log.userEmail}</td>
-                        <td className="py-2.5 px-3">
-                          <span className={`px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase border ${log.userRole === "Super Admin" ? "bg-rose-50 text-rose-600 border-rose-100" : log.userRole === "Lead Executive" ? "bg-indigo-50 text-indigo-600 border-indigo-100" : "bg-slate-100 text-slate-500 border-slate-200"}`}>
-                            {log.userRole}
-                          </span>
+                    {paginatedAuditLogs.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-8 text-center text-slate-400 font-mono">
+                          No audit log records found matching constraints.
                         </td>
-                        <td className="py-2.5 px-3 font-black text-slate-800">{log.action}</td>
-                        <td className="py-2.5 px-3 text-slate-500 font-medium">{log.details}</td>
                       </tr>
-                    ))}
+                    ) : (
+                      paginatedAuditLogs.map((log) => (
+                        <tr key={log.id} className="hover:bg-slate-50/40">
+                          <td className="py-2.5 px-3 font-mono text-slate-400">{log.timestamp}</td>
+                          <td className="py-2.5 px-3 text-slate-700">{log.userEmail}</td>
+                          <td className="py-2.5 px-3">
+                            <span className={`px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase border ${log.userRole === "Super Admin" ? "bg-rose-50 text-rose-600 border-rose-100" : log.userRole === "Lead Executive" ? "bg-indigo-50 text-indigo-600 border-indigo-100" : "bg-slate-100 text-slate-500 border-slate-200"}`}>
+                              {log.userRole}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 font-black text-slate-800">{log.action}</td>
+                          <td className="py-2.5 px-3 text-slate-500 font-medium">{log.details}</td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
+
+              {/* Dynamic Slate Pagination Controls */}
+              {totalAuditPages > 1 && (() => {
+                const pageNumbers = Array.from({ length: totalAuditPages }, (_, i) => i + 1);
+                const getVisiblePages = () => {
+                  if (totalAuditPages <= 5) return pageNumbers;
+                  if (currentAuditPage <= 3) return [1, 2, 3, 4, 5];
+                  if (currentAuditPage >= totalAuditPages - 2) return [totalAuditPages - 4, totalAuditPages - 3, totalAuditPages - 2, totalAuditPages - 1, totalAuditPages];
+                  return [currentAuditPage - 2, currentAuditPage - 1, currentAuditPage, currentAuditPage + 1, currentAuditPage + 2];
+                };
+
+                return (
+                  <div className="flex flex-col sm:flex-row items-center justify-between pt-4 border-t border-slate-100 gap-4 select-none">
+                    <span className="text-xs text-slate-400 font-medium font-sans">
+                      Showing <span className="font-semibold text-slate-600">{(currentAuditPage - 1) * AUDIT_ITEMS_PER_PAGE + 1}</span> to{" "}
+                      <span className="font-semibold text-slate-600">
+                        {Math.min(currentAuditPage * AUDIT_ITEMS_PER_PAGE, filteredAuditLogs.length)}
+                      </span>{" "}
+                      of <span className="font-semibold text-slate-600">{filteredAuditLogs.length}</span> entries
+                    </span>
+                    
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setAuditPage((prev) => Math.max(1, prev - 1))}
+                        disabled={currentAuditPage === 1}
+                        className="p-1 px-2.5 bg-slate-50 hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-slate-50 border border-slate-150 text-slate-500 rounded-lg text-xs font-semibold inline-flex items-center gap-1 transition-colors outline-none cursor-pointer disabled:cursor-not-allowed select-none"
+                      >
+                        <ChevronLeft className="w-3.5 h-3.5" />
+                        Prev
+                      </button>
+                      
+                      {totalAuditPages <= 5 ? (
+                        pageNumbers.map((p) => (
+                          <button
+                            key={p}
+                            type="button"
+                            onClick={() => setAuditPage(p)}
+                            className={`w-7 h-7 rounded-lg text-xs font-bold transition-all outline-none select-none cursor-pointer ${
+                              currentAuditPage === p
+                                ? "bg-slate-900 text-white shadow-xs"
+                                : "bg-transparent text-slate-500 hover:bg-slate-50 hover:text-slate-700 border border-transparent"
+                            }`}
+                          >
+                            {p}
+                          </button>
+                        ))
+                      ) : (
+                        <>
+                          {currentAuditPage > 3 && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setAuditPage(1)}
+                                className={`w-7 h-7 rounded-lg text-xs font-bold transition-all outline-none select-none cursor-pointer ${
+                                  currentAuditPage === 1 ? "bg-slate-900 text-white" : "bg-transparent text-slate-500 hover:bg-slate-50 hover:text-slate-700 border border-transparent"
+                                }`}
+                              >
+                                1
+                              </button>
+                              {currentAuditPage > 4 && <span className="text-xs text-slate-300 font-bold px-1 select-none">...</span>}
+                            </>
+                          )}
+                          
+                          {getVisiblePages().map((p) => {
+                            if (currentAuditPage > 3 && p === 1) return null;
+                            if (currentAuditPage < totalAuditPages - 2 && p === totalAuditPages) return null;
+                            return (
+                              <button
+                                key={p}
+                                type="button"
+                                onClick={() => setAuditPage(p)}
+                                className={`w-7 h-7 rounded-lg text-xs font-bold transition-all outline-none select-none cursor-pointer ${
+                                  currentAuditPage === p
+                                    ? "bg-slate-900 text-white shadow-xs"
+                                    : "bg-transparent text-slate-500 hover:bg-slate-50 hover:text-slate-700 border border-transparent"
+                                }`}
+                              >
+                                {p}
+                              </button>
+                            );
+                          })}
+                          
+                          {currentAuditPage < totalAuditPages - 2 && (
+                            <>
+                              {currentAuditPage < totalAuditPages - 3 && <span className="text-xs text-slate-300 font-bold px-1 select-none">...</span>}
+                              <button
+                                type="button"
+                                onClick={() => setAuditPage(totalAuditPages)}
+                                className={`w-7 h-7 rounded-lg text-xs font-bold transition-all outline-none select-none cursor-pointer ${
+                                  currentAuditPage === totalAuditPages ? "bg-slate-900 text-white" : "bg-transparent text-slate-500 hover:bg-slate-50 hover:text-slate-700 border border-transparent"
+                                }`}
+                              >
+                                {totalAuditPages}
+                              </button>
+                            </>
+                          )}
+                        </>
+                      )}
+                      
+                      <button
+                        type="button"
+                        onClick={() => setAuditPage((prev) => Math.min(totalAuditPages, prev + 1))}
+                        disabled={currentAuditPage === totalAuditPages}
+                        className="p-1 px-2.5 bg-slate-50 hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-slate-50 border border-slate-150 text-slate-500 rounded-lg text-xs font-semibold inline-flex items-center gap-1 transition-colors outline-none cursor-pointer disabled:cursor-not-allowed select-none"
+                      >
+                        Next
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
 

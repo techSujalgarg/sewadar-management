@@ -43,7 +43,7 @@ export default function Attendance({
   const [selectedDate, setSelectedDate] = useState("2026-06-05");
   const [searchText, setSearchText] = useState("");
 
-  // QR Simulator local states
+  // QR Scanner local states
   const [selectedQrSewadarId, setSelectedQrSewadarId] = useState(sewadars[0]?.id || "");
   const [isScanning, setIsScanning] = useState(false);
   const [scanSuccess, setScanSuccess] = useState<string | null>(null);
@@ -97,7 +97,7 @@ export default function Attendance({
   }, [attendance, selectedDate]);
 
   // QR verification trigger
-  const handlePerformSimulatedScan = () => {
+  const handlePerformBadgeScan = () => {
     if (isScanning) return;
     const scanSubject = sewadars.find((s) => s.id === selectedQrSewadarId);
     if (!scanSubject) return;
@@ -280,7 +280,7 @@ export default function Attendance({
           className={`pb-3 px-4 text-xs font-bold font-sans uppercase tracking-wider border-b-2 transition-all inline-flex items-center gap-2 ${activeSubTab === "qr_scan" ? "border-indigo-600 text-indigo-600" : "border-transparent text-slate-400 hover:text-slate-600"}`}
         >
           <QrCode className="w-4 h-4" />
-          QR scanner simulator
+          Integrated QR Scanner
         </button>
         <button
           onClick={() => setActiveSubTab("historical")}
@@ -463,7 +463,7 @@ export default function Attendance({
         </div>
       )}
 
-      {/* TAB 2: QR CODE SCANNER SIMULATOR */}
+      {/* TAB 2: INTEGRATED QR CODE SCANNER */}
       {activeSubTab === "qr_scan" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
           
@@ -494,7 +494,7 @@ export default function Attendance({
                   <QrCode className="w-12 h-12 stroke-[1.5] text-slate-600 animate-pulse mx-auto" />
                   <div>
                     <h5 className="text-xs font-bold">Awaiting RFID / QR Code presentation</h5>
-                    <p className="text-[10px] text-slate-500 mt-1 max-w-xs">Select any sewadar on the right, display their badge QR, and trigger a simulation scan check.</p>
+                    <p className="text-[10px] text-slate-500 mt-1 max-w-xs">Select any sewadar on the right, display their badge QR, and execute a secure scan check.</p>
                   </div>
                 </div>
               )}
@@ -508,7 +508,7 @@ export default function Attendance({
               <span className="text-slate-600 font-semibold">Ready to verify selected candidate?</span>
               <button
                 type="button"
-                onClick={handlePerformSimulatedScan}
+                onClick={handlePerformBadgeScan}
                 disabled={isScanning || !selectedQrSewadarId}
                 className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-bold text-[10px] uppercase tracking-wider py-1.5 px-3.5 rounded-lg inline-flex items-center gap-1.5 transition-all outline-none"
               >

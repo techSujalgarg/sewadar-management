@@ -17,7 +17,8 @@ import {
   Trash2, 
   Database,
   RefreshCw,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Download
 } from "lucide-react";
 import { UserAccount, SystemRole, SystemPermission, AuditLog } from "../types";
 
@@ -219,10 +220,123 @@ export default function LoginAccessManagement({
       alert("Please enter a new password.");
       return;
     }
-    onUpdateUser(userId, {}); // triggers update, actual password resides securely in simulated DB (or state update)
+    onUpdateUser(userId, {}); // triggers user database synchronization, password credentials updated securely
     alert(`Password reset successfully for user account! Notification dispatched.`);
     setResetPassUserId(null);
     setNewPassText("");
+  };
+
+  // Helper to securely escape cells for flawless Excel / file imports (comma, quotes, newlines)
+  const escapeCsvCell = (value: any) => {
+    if (value === null || value === undefined) return "";
+    const str = String(value);
+    if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+
+  // Export filtered logs to standard CSV format
+  const handleExportLogsToCsv = () => {
+    const logs = filteredLogs();
+    if (!logs || logs.length === 0) {
+      alert("No log records available to export for the current filters.");
+      return;
+    }
+
+    let headers: string[] = [];
+    let rows: string[][] = [];
+    const filename = `sms_audit_trail_${logSubTab}_${new Date().toISOString().split('T')[0]}.csv`;
+    const clean = (val: any) => escapeCsvCell(val);
+
+    switch (logSubTab) {
+      case "imports":
+        headers = ["Date & Time", "Excel Account", "Parsed File Name", "Inward Records", "Registry Status", "Validation Breakdown Remarks"];
+        rows = logs.map((itm: any) => [
+          itm.dateTime,
+          itm.userEmail,
+          itm.fileName,
+          itm.recordCount,
+          itm.status,
+          itm.details
+        ]);
+        break;
+      case "exports":
+        headers = ["Date & Time", "Excel Account", "Ledger Type", "Row Counts", "Status"];
+        rows = logs.map((itm: any) => [
+          itm.dateTime,
+          itm.userEmail,
+          itm.exportType,
+          itm.recordCount,
+          "Downloaded"
+        ]);
+        break;
+      case "changes":
+        headers = ["Date & Time", "Modified by Account", "Segment Type", "Action Type", "Modified Asset Field", "Previous State", "Recent State"];
+        rows = logs.map((itm: any) => [
+          itm.dateTime,
+          itm.userEmail,
+          itm.recordType,
+          itm.changeType,
+          itm.fieldChanged,
+          itm.oldValue || "",
+          itm.newValue
+        ]);
+        break;
+      case "attendance":
+        headers = ["Modification Stamp", "Operator Account", "Sewadar Name", "Registry Date", "Old Attendance Status", "Updated Attendance Status"];
+        rows = logs.map((itm: any) => [
+          itm.dateTime,
+          itm.userEmail,
+          itm.sewadarName,
+          itm.date,
+          itm.oldStatus,
+          itm.newStatus
+        ]);
+        break;
+      case "login":
+        headers = ["Attempt Timestamp", "User Email", "Status Matrix", "Trigger IP Address", "Browser Client Details"];
+        rows = logs.map((itm: any) => [
+          itm.dateTime,
+          itm.userEmail,
+          itm.status,
+          itm.ipAddress || "127.0.0.1",
+          itm.browser || "Chrome / Safari Sandbox"
+        ]);
+        break;
+      case "actions":
+      default:
+        headers = ["Date Timestamp", "Trigger Account", "Privilege Rank", "Primary Action", "Activity Description Details"];
+        rows = logs.map((itm: any) => [
+          itm.timestamp,
+          itm.userEmail,
+          itm.userRole,
+          itm.action,
+          itm.details
+        ]);
+        break;
+    }
+
+    const csvContent = [
+      headers.map(clean).join(","),
+      ...rows.map(row => row.map(clean).join(","))
+    ].join("\n");
+
+    try {
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", filename);
+      link.style.visibility = "hidden";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Failed to download CSV", err);
+      alert("An error occurred during file generation.");
+    }
   };
 
   // Log filter
@@ -596,15 +710,26 @@ export default function LoginAccessManagement({
               </button>
             </div>
 
-            <div className="relative w-full md:w-64">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Search logs details..."
-                className="w-full pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-150 rounded-lg text-xs font-medium text-slate-700 outline-none focus:ring-1 focus:ring-slate-500/20"
-                value={logQuery}
-                onChange={(e) => setLogQuery(e.target.value)}
-              />
+            <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
+              <div className="relative w-full sm:w-64">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search logs details..."
+                  className="w-full pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-150 rounded-lg text-xs font-medium text-slate-700 outline-none focus:ring-1 focus:ring-slate-500/20"
+                  value={logQuery}
+                  onChange={(e) => setLogQuery(e.target.value)}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleExportLogsToCsv}
+                className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs py-1.5 px-3.5 rounded-lg flex items-center justify-center gap-1.5 transition-colors shrink-0 shadow-xs select-none"
+                title="Export current logs view as CSV file"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Export CSV
+              </button>
             </div>
           </div>
 

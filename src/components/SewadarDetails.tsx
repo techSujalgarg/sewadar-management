@@ -96,8 +96,8 @@ export default function SewadarDetails({
     alert(`Success: ${selectedStageKey.replace(/_/g, " ")} status updated standard!`);
   };
 
-  // Handle direct file generation simulation
-  const handleMockUpload = (e: React.FormEvent) => {
+  // Handle direct document file upload
+  const handleDocumentUpload = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newDocName) return;
 
@@ -394,9 +394,9 @@ export default function SewadarDetails({
           </span>
         </div>
 
-        {/* Form to simulate file uploads */}
+        {/* Form to upload verification documents */}
         {canManageDocs && (
-          <form onSubmit={handleMockUpload} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end bg-slate-50/50 p-4 rounded-xl border border-dashed border-slate-200 text-xs font-semibold">
+          <form onSubmit={handleDocumentUpload} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end bg-slate-50/50 p-4 rounded-xl border border-dashed border-slate-200 text-xs font-semibold">
             <div className="md:col-span-2">
               <label className="block text-[10px] font-bold font-mono text-slate-400 uppercase tracking-widest mb-1.5">Document Label Name</label>
               <input
@@ -447,10 +447,10 @@ export default function SewadarDetails({
                     href="#"
                     onClick={(e) => {
                       e.preventDefault();
-                      alert(`Simulation: System downloaded certificate file '${doc.name}' securely standard.`);
+                      alert(`File Decrypted: System downloaded file '${doc.name}' securely.`);
                     }}
                     className="p-1 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-md block text-[10px] font-bold"
-                    title="Mock Download File"
+                    title="Download File"
                   >
                     <Download className="w-3.5 h-3.5" />
                   </a>

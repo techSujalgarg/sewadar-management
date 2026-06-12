@@ -5,6 +5,7 @@
 
 import express from "express";
 import path from "path";
+import fs from "fs";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import { createServer as createViteServer } from "vite";
@@ -17,6 +18,197 @@ const PORT = 3000;
 
 // Middlewares
 app.use(express.json({ limit: "50mb" }));
+
+// PRODUCTION-READY USER PERSISTENCE SYSTEM
+const DB_PATH = path.join(process.cwd(), "users_registry.json");
+
+const DEFAULT_USERS = [
+  {
+    id: "user-admin",
+    name: "Sujal Garg",
+    email: "admin@sms.org",
+    role: "Super Admin",
+    isActive: true,
+    lastLogin: "2026-06-09 15:49:06",
+    password: "admin123",
+    customPermissions: {
+      view: true,
+      add: true,
+      edit: true,
+      delete: true,
+      import: true,
+      export: true,
+      dashboard: true,
+      directory: true,
+      attendance: true,
+      workflow: true,
+      reports: true,
+      userManagement: true
+    }
+  },
+  {
+    id: "user-lead",
+    name: "Lead Coordinator",
+    email: "lead@sms.org",
+    role: "Lead Executive",
+    isActive: true,
+    lastLogin: "2026-06-08 11:20:45",
+    password: "lead123",
+    customPermissions: {
+      view: true,
+      add: true,
+      edit: true,
+      delete: false,
+      import: true,
+      export: true,
+      dashboard: true,
+      directory: true,
+      attendance: true,
+      workflow: true,
+      reports: true,
+      userManagement: false
+    }
+  },
+  {
+    id: "user-viewer",
+    name: "SMS Auditor",
+    email: "viewer@sms.org",
+    role: "Read-Only Viewer",
+    isActive: true,
+    lastLogin: "2026-06-09 09:12:30",
+    password: "view123",
+    customPermissions: {
+      view: true,
+      add: false,
+      edit: false,
+      delete: false,
+      import: false,
+      export: false,
+      dashboard: true,
+      directory: true,
+      attendance: true,
+      workflow: true,
+      reports: false,
+      userManagement: false
+    }
+  }
+];
+
+function loadUsers() {
+  try {
+    if (fs.existsSync(DB_PATH)) {
+      const data = fs.readFileSync(DB_PATH, "utf-8");
+      return JSON.parse(data);
+    }
+  } catch (err) {
+    console.error("Failed to read user registry file, using defaults:", err);
+  }
+  return DEFAULT_USERS;
+}
+
+function saveUsers(users: any[]) {
+  try {
+    fs.writeFileSync(DB_PATH, JSON.stringify(users, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Failed to write to user registry file:", err);
+  }
+}
+
+// 1. GET /api/users - Retrieve user accounts registry
+app.get("/api/users", (req, res) => {
+  const users = loadUsers();
+  // Strip passwords in production output for security
+  const safeUsers = users.map(({ password, ...u }: any) => u);
+  res.json(safeUsers);
+});
+
+// 2. POST /api/users - Create custom dynamic user account
+app.post("/api/users", (req, res) => {
+  const newUser = req.body;
+  if (!newUser || !newUser.name || !newUser.email) {
+    return res.status(400).json({ error: "Name and email are required" });
+  }
+  const users = loadUsers();
+  if (users.some((u: any) => u.email.toLowerCase() === newUser.email.toLowerCase())) {
+    return res.status(400).json({ error: "User Account with this email already exists" });
+  }
+
+  const completeUser = {
+    ...newUser,
+    id: newUser.id || `usr-${Date.now()}`,
+    lastLogin: "Never Logged",
+    password: newUser.password || "user123"
+  };
+
+  users.push(completeUser);
+  saveUsers(users);
+
+  const { password, ...safeUser } = completeUser;
+  res.status(201).json(safeUser);
+});
+
+// 3. PUT /api/users/:id - Update user properties (e.g. password resets, privilege toggles)
+app.put("/api/users/:id", (req, res) => {
+  const { id } = req.params;
+  const updates = req.body;
+  const users = loadUsers();
+  const idx = users.findIndex((u: any) => u.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: "User profile not found" });
+  }
+
+  users[idx] = {
+    ...users[idx],
+    ...updates
+  };
+  saveUsers(users);
+
+  const { password, ...safeUser } = users[idx];
+  res.json(safeUser);
+});
+
+// 4. DELETE /api/users/:id - Erase user access
+app.delete("/api/users/:id", (req, res) => {
+  const { id } = req.params;
+  const users = loadUsers();
+  const filtered = users.filter((u: any) => u.id !== id);
+  if (filtered.length === users.length) {
+    return res.status(404).json({ error: "User profile not found" });
+  }
+  saveUsers(filtered);
+  res.json({ success: true, id });
+});
+
+// 5. POST /api/auth/login - Secure server-side credential verification
+app.post("/api/auth/login", (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: "Email and password are required" });
+  }
+
+  const users = loadUsers();
+  const matched = users.find((u: any) => u.email.toLowerCase() === email.toLowerCase());
+
+  if (!matched) {
+    return res.status(401).json({ error: "Invalid credentials or account deactivated. Contact Super Admin." });
+  }
+
+  if (!matched.isActive) {
+    return res.status(401).json({ error: "Account deactivated. Contact Super Admin." });
+  }
+
+  const expectedPassword = matched.password || "user123";
+  if (password !== expectedPassword) {
+    return res.status(401).json({ error: "Invalid credentials. Contact Super Admin." });
+  }
+
+  const timestamp = new Date().toISOString().replace("T", " ").substring(0, 19);
+  matched.lastLogin = timestamp;
+  saveUsers(users);
+
+  const { password: _, ...safeUser } = matched;
+  res.json({ success: true, user: safeUser });
+});
 
 // Initialize Gemini Client
 const apiKey = process.env.GEMINI_API_KEY;
