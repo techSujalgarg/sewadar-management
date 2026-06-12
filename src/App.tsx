@@ -292,32 +292,37 @@ export default function App() {
     const fetchServerUsers = async () => {
       try {
         const response = await fetch("/api/users");
-        if (response.ok) {
+        const contentType = response.headers.get("content-type");
+        if (response.ok && contentType && contentType.includes("application/json")) {
           const registry: UserAccount[] = await response.json();
-          setUsers(registry);
+          if (Array.isArray(registry)) {
+            setUsers(registry);
 
-          // Verify and sync active user session health
-          const activeUserRaw = localStorage.getItem("sms_active_user");
-          if (activeUserRaw) {
-            const parsed = JSON.parse(activeUserRaw) as UserAccount;
-            const freshUser = registry.find(u => u.email.toLowerCase() === parsed.email.toLowerCase());
-            
-            if (!freshUser || !freshUser.isActive) {
-              console.warn("Session invalidated on the server registry. Logging out.");
-              setCurrentUser(null);
-              localStorage.removeItem("sms_active_user");
-            } else {
-              // Smoothly sync roles and permissions
-              setCurrentUser(freshUser);
-              if (freshUser.role === "Super Admin") {
-                setCurrentRole("super_admin");
-              } else if (freshUser.role === "Lead Executive") {
-                setCurrentRole("executive");
+            // Verify and sync active user session health
+            const activeUserRaw = localStorage.getItem("sms_active_user");
+            if (activeUserRaw) {
+              const parsed = JSON.parse(activeUserRaw) as UserAccount;
+              const freshUser = registry.find(u => u.email.toLowerCase() === parsed.email.toLowerCase());
+              
+              if (!freshUser || !freshUser.isActive) {
+                console.warn("Session invalidated on the server registry. Logging out.");
+                setCurrentUser(null);
+                localStorage.removeItem("sms_active_user");
               } else {
-                setCurrentRole("viewer");
+                // Smoothly sync roles and permissions
+                setCurrentUser(freshUser);
+                if (freshUser.role === "Super Admin") {
+                  setCurrentRole("super_admin");
+                } else if (freshUser.role === "Lead Executive") {
+                  setCurrentRole("executive");
+                } else {
+                  setCurrentRole("viewer");
+                }
               }
             }
           }
+        } else {
+          console.warn("Express server database not returning JSON. Operating in robust offline-first mode.");
         }
       } catch (err) {
         console.warn("Express server database not reachable. Falling back to robust LocalStorage state.", err);
@@ -503,7 +508,7 @@ export default function App() {
     setNotifications((prev) => [log, ...prev]);
   };
 
-  // USER MATRIX LOGIN HANDLER (PRODUCTION-READY AUTH SERVER API CALL)
+  // USER MATRIX LOGIN HANDLER (PRODUCTION-READY AUTH SERVER WITH CLIENT FALLBACK)
   const handleLogin = async (email: string, pass: string): Promise<boolean> => {
     try {
       const res = await fetch("/api/auth/login", {
@@ -512,42 +517,76 @@ export default function App() {
         body: JSON.stringify({ email, password: pass }),
       });
 
-      if (!res.ok) {
-        throw new Error("Unauthorized credentials or account deactivated.");
-      }
+      const contentType = res.headers.get("content-type");
+      if (res.ok && contentType && contentType.includes("application/json")) {
+        const outcome = await res.json();
+        if (outcome.success && outcome.user) {
+          const authenticatedUser = outcome.user as UserAccount;
+          
+          setCurrentUser(authenticatedUser);
+          
+          if (authenticatedUser.role === "Super Admin") setCurrentRole("super_admin");
+          else if (authenticatedUser.role === "Lead Executive") setCurrentRole("executive");
+          else setCurrentRole("viewer");
 
-      const outcome = await res.json();
-      if (outcome.success && outcome.user) {
-        const authenticatedUser = outcome.user as UserAccount;
-        
-        setCurrentUser(authenticatedUser);
-        
-        // Match authority roles selector
-        if (authenticatedUser.role === "Super Admin") setCurrentRole("super_admin");
-        else if (authenticatedUser.role === "Lead Executive") setCurrentRole("executive");
-        else setCurrentRole("viewer");
-
-        // Record trace Mod audit logs
-        const newHist: LoginHistoryLog = {
-          id: `login-${Date.now()}`,
-          dateTime: authenticatedUser.lastLogin || new Date().toISOString().replace("T", " ").substring(0, 19),
-          userEmail: email,
-          status: "Success",
-          ipAddress: "192.168.1.14"
-        };
-        setLoginLogs(prev => [newHist, ...prev]);
-        logAuditAction("User Session Authenticated", `Authorized operator ${authenticatedUser.name} (${authenticatedUser.role}) safely.`);
-        
-        // Fetch refreshed user profiles from registry
-        const syncRes = await fetch("/api/users");
-        if (syncRes.ok) {
-          const freshUsersList = await syncRes.json();
-          setUsers(freshUsersList);
+          const newHist: LoginHistoryLog = {
+            id: `login-${Date.now()}`,
+            dateTime: authenticatedUser.lastLogin || new Date().toISOString().replace("T", " ").substring(0, 19),
+            userEmail: email,
+            status: "Success",
+            ipAddress: "192.168.1.14"
+          };
+          setLoginLogs(prev => [newHist, ...prev]);
+          logAuditAction("User Session Authenticated", `Authorized operator ${authenticatedUser.name} (${authenticatedUser.role}) safely.`);
+          
+          const syncRes = await fetch("/api/users");
+          const syncContentType = syncRes.headers.get("content-type");
+          if (syncRes.ok && syncContentType && syncContentType.includes("application/json")) {
+            const freshUsersList = await syncRes.json();
+            if (Array.isArray(freshUsersList)) {
+              setUsers(freshUsersList);
+            }
+          }
+          return true;
         }
-        return true;
       }
     } catch (err) {
-      console.error("Realtime login server error:", err);
+      console.warn("Express auth server not reachable. Trying client-side fallback authentication.", err);
+    }
+
+    // Client-side fallback authentication for static hosting platforms like Vercel
+    const matched = users.find((u) => u.email.toLowerCase() === email.toLowerCase());
+    if (matched) {
+      if (!matched.isActive) return false;
+
+      const expectedPassword = matched.password || (
+        matched.id === 'user-admin' ? 'admin123' : 
+        matched.id === 'user-lead' ? 'lead123' : 
+        matched.id === 'user-viewer' ? 'view123' : 'user123'
+      );
+      
+      if (pass === expectedPassword) {
+        const timestamp = new Date().toISOString().replace("T", " ").substring(0, 19);
+        const updatedUser = { ...matched, lastLogin: timestamp };
+        
+        setUsers(prev => prev.map(u => u.id === matched.id ? updatedUser : u));
+        setCurrentUser(updatedUser);
+        
+        if (matched.role === "Super Admin") setCurrentRole("super_admin");
+        else if (matched.role === "Lead Executive") setCurrentRole("executive");
+        else setCurrentRole("viewer");
+
+        const newHist: LoginHistoryLog = {
+          id: `login-${Date.now()}`,
+          dateTime: timestamp,
+          userEmail: email,
+          status: "Success",
+          ipAddress: "127.0.0.1 (Local Fallback)"
+        };
+        setLoginLogs(prev => [newHist, ...prev]);
+        logAuditAction("User Session Authenticated (Static Mode)", `Authorized operator ${matched.name} (${matched.role}) locally.`);
+        return true;
+      }
     }
 
     // Failed login log register
