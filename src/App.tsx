@@ -293,8 +293,31 @@ export default function App() {
       try {
         const response = await fetch("/api/users");
         if (response.ok) {
-          const registry = await response.json();
+          const registry: UserAccount[] = await response.json();
           setUsers(registry);
+
+          // Verify and sync active user session health
+          const activeUserRaw = localStorage.getItem("sms_active_user");
+          if (activeUserRaw) {
+            const parsed = JSON.parse(activeUserRaw) as UserAccount;
+            const freshUser = registry.find(u => u.email.toLowerCase() === parsed.email.toLowerCase());
+            
+            if (!freshUser || !freshUser.isActive) {
+              console.warn("Session invalidated on the server registry. Logging out.");
+              setCurrentUser(null);
+              localStorage.removeItem("sms_active_user");
+            } else {
+              // Smoothly sync roles and permissions
+              setCurrentUser(freshUser);
+              if (freshUser.role === "Super Admin") {
+                setCurrentRole("super_admin");
+              } else if (freshUser.role === "Lead Executive") {
+                setCurrentRole("executive");
+              } else {
+                setCurrentRole("viewer");
+              }
+            }
+          }
         }
       } catch (err) {
         console.warn("Express server database not reachable. Falling back to robust LocalStorage state.", err);

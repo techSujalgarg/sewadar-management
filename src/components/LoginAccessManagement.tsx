@@ -146,7 +146,8 @@ export default function LoginAccessManagement({
       name: userName,
       role: userRole || "Custom",
       isActive: true,
-      customPermissions: { ...selectedPermissions }
+      customPermissions: { ...selectedPermissions },
+      password: userPass || "user123"
     });
 
     // Reset Form
@@ -220,7 +221,7 @@ export default function LoginAccessManagement({
       alert("Please enter a new password.");
       return;
     }
-    onUpdateUser(userId, {}); // triggers user database synchronization, password credentials updated securely
+    onUpdateUser(userId, { password: newPassText }); // triggers user database synchronization, password credentials updated securely
     alert(`Password reset successfully for user account! Notification dispatched.`);
     setResetPassUserId(null);
     setNewPassText("");
